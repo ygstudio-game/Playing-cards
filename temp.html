@@ -1,0 +1,643 @@
+<script>
+    const gameState = {
+        players: [],
+        currentPlayerIndex: 0,
+        discardPile: [],
+        currentPlay: null,
+        consecutiveSkips: 0,
+        gameLog: [],
+        deck: [],
+        playerCards: [],
+        gameStarted: false,
+        roomCode: '',
+        isHost: false,
+        playerName: '',
+        maxPlayers: 3,
+        playerId: '',
+        socket: null,
+        isMyTurn: false,
+        connectionStatus: 'disconnected',
+        reconnectAttempts: 0
+    };
+
+    // Card values and suits
+    // 1. GLOBAL VARIABLES ============================================
+    const cardValues = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
+    const cardSuits = ['♥', '♦', '♣', '♠'];
+    let selectedCards = [];
+    let elements;
+
+    // Initialize the game when DOM is loaded
+    window.addEventListener('DOMContentLoaded', () => {
+        initializeElements();
+        initSocketConnection();
+    });
+
+    function initializeElements() {
+        elements = {
+            mainMenu: document.getElementById('main-menu'),
+            createRoomModal: document.getElementById('create-room-modal'),
+            joinRoomModal: document.getElementById('join-room-modal'),
+            roomLobby: document.getElementById('room-lobby'),
+            gameArea: document.getElementById('game-area'),
+            playerCardsContainer: document.getElementById('player-cards'),
+            playersList: document.getElementById('players-list'),
+            discardPileContainer: document.getElementById('discard-pile'),
+            currentPlayDisplay: document.getElementById('current-play'),
+            currentClaimText: document.getElementById('current-claim'),
+            gameLog: document.getElementById('game-log'),
+            playCardsBtn: document.getElementById('play-cards-btn'),
+            skipBtn: document.getElementById('skip-btn'),
+            challengeBtn: document.getElementById('challenge-btn'),
+            newGameBtn: document.getElementById('new-game-btn'),
+            rulesBtn: document.getElementById('rules-btn'),
+            rulesModal: document.getElementById('rules-modal'),
+            closeRulesBtns: document.querySelectorAll('.close-rules-btn'),
+            winnerModal: document.getElementById('winner-modal'),
+            winnerText: document.getElementById('winner-text'),
+            newGameWinnerBtn: document.getElementById('new-game-winner-btn'),
+            closeWinnerBtn: document.getElementById('close-winner-btn'),
+            claimSelect: document.getElementById('claim-select'),
+            claimCount: document.getElementById('claim-count'),
+            selectedCount: document.getElementById('selected-count'),
+            createRoomBtn: document.getElementById('create-room-btn'),
+            joinRoomBtn: document.getElementById('join-room-btn'),
+            rulesMenuBtn: document.getElementById('rules-menu-btn'),
+            closeCreateRoom: document.getElementById('close-create-room'),
+            closeJoinRoom: document.getElementById('close-join-room'),
+            hostName: document.getElementById('host-name'),
+            playerCount: document.getElementById('player-count'),
+            startRoomBtn: document.getElementById('start-room-btn'),
+            playerName: document.getElementById('player-name'),
+            roomCode: document.getElementById('room-code'),
+            joinRoomSubmit: document.getElementById('join-room-submit'),
+            displayRoomCode: document.getElementById('display-room-code'),
+            copyRoomCode: document.getElementById('copy-room-code'),
+            currentPlayers: document.getElementById('current-players'),
+            maxPlayers: document.getElementById('max-players'),
+            lobbyPlayers: document.getElementById('lobby-players'),
+            leaveLobbyBtn: document.getElementById('leave-lobby-btn'),
+            startGameBtn: document.getElementById('start-game-btn'),
+            loadingScreen: document.getElementById('loading-screen'),
+            serverStatus: document.getElementById('server-status')
+        };
+        
+        setupEventListeners();
+    }
+
+    function showLoadingScreen(message = 'Loading...') {
+        if (!elements.loadingScreen) return;
+        
+        elements.loadingScreen.innerHTML = `
+            <div class="text-center">
+                <div class="loader mx-auto mb-4"></div>
+                <p class="text-xl">${message}</p>
+                ${gameState.reconnectAttempts > 0 ? 
+                    `<p class="text-sm text-gray-400 mt-2">Attempt ${gameState.reconnectAttempts + 1} of 5</p>` : ''}
+            </div>
+        `;
+        elements.loadingScreen.classList.remove('hidden');
+    }
+    // Enhanced card selection with animations
+    function toggleCardSelection(cardEl, index) {
+        const isSelected = selectedCards.includes(index);
+        
+        if (isSelected) {
+            selectedCards = selectedCards.filter(i => i !== index);
+            cardEl.classList.remove('selected', 'card-play-animation');
+        } else {
+            // Limit selection based on game rules
+            if (selectedCards.length >= 4) {
+                showToast('You can select up to 4 cards at once');
+                return;
+            }
+            
+            selectedCards.push(index);
+            cardEl.classList.add('selected', 'card-play-animation');
+            
+            // Remove animation class after it completes
+            setTimeout(() => {
+                cardEl.classList.remove('card-play-animation');
+            }, 300);
+        }
+        
+        // Update claim count display
+        elements.selectedCount.textContent = `(${selectedCards.length} selected)`;
+        elements.claimCount.value = selectedCards.length;
+        
+        // Enable/disable play button
+        elements.playCardsBtn.disabled = selectedCards.length === 0 || !gameState.isMyTurn;
+    }
+     // 2. CORE GAME FUNCTIONS ========================================
+     function skipTurn() {
+        if (!gameState.isMyTurn) return;
+        gameState.socket.emit('skipTurn', {
+            roomCode: gameState.roomCode,
+            playerId: gameState.playerId
+        });
+    }
+
+    function challengePlay() {
+        if (!gameState.currentPlay || !gameState.isMyTurn) return;
+        gameState.socket.emit('challenge', {
+            roomCode: gameState.roomCode,
+            playerId: gameState.playerId
+        });
+    }
+    // Enhanced playCards function with validation
+    function playCards() {
+        if (selectedCards.length === 0 || !gameState.isMyTurn) {
+            showToast('Please select cards to play');
+            return;
+        }
+        
+        const claimValue = elements.claimSelect.value;
+        if (!claimValue) {
+            showToast('Please select a card value to claim');
+            return;
+        }
+        
+        // Get the selected cards
+        const currentPlayerIndex = gameState.players.findIndex(p => p.id === gameState.playerId);
+        const cardsToPlay = selectedCards.map(index => {
+            return gameState.playerCards[currentPlayerIndex][index];
+        });
+        
+        // Emit play cards event to server
+        gameState.socket.emit('playCards', {
+            roomCode: gameState.roomCode,
+            playerId: gameState.playerId,
+            cardIndices: selectedCards,
+            claim: {
+                value: claimValue,
+                count: selectedCards.length // Use actual selected count
+            }
+        });
+        
+        // Clear selection
+        selectedCards = [];
+        elements.selectedCount.textContent = '(0 selected)';
+    }
+    
+    // New function to show toast messages
+    function showToast(message, duration = 3000) {
+        const toast = document.createElement('div');
+        toast.className = 'fixed bottom-4 left-1/2 transform -translate-x-1/2 bg-gray-800 text-white px-4 py-2 rounded-lg shadow-lg z-50';
+        toast.textContent = message;
+        document.body.appendChild(toast);
+        
+        setTimeout(() => {
+            toast.classList.add('opacity-0', 'transition-opacity', 'duration-300');
+            setTimeout(() => toast.remove(), 300);
+        }, duration);
+    }
+    
+    // Enhanced server connection handling
+    function initSocketConnection() {
+        showLoadingScreen('Connecting to server...');
+        
+        // For development, connect to local server
+        // In production, you would connect to your actual server
+        const socketUrl = window.location.hostname === '127.0.0.1' ? 
+            'http://127.0.0.1:5500/index3.html' : 
+            'https://your-production-server.com';
+        
+        gameState.socket = io(socketUrl, {
+            reconnectionAttempts: 5,
+            reconnectionDelay: 1000,
+            transports: ['websocket'],
+            auth: {
+                playerName: gameState.playerName,
+                isHost: gameState.isHost
+            }
+        });
+        
+        // Connection events with enhanced status handling
+        gameState.socket.on('connect', () => {
+            console.log('Connected to server with ID:', gameState.socket.id);
+            gameState.connectionStatus = 'connected';
+            gameState.reconnectAttempts = 0;
+            updateServerStatus(true);
+            hideLoadingScreen();
+            
+            if (gameState.roomCode) {
+                // Rejoin room if we were in one
+                gameState.socket.emit('rejoinRoom', {
+                    roomCode: gameState.roomCode,
+                    playerId: gameState.playerId
+                });
+            }
+        });
+        
+        gameState.socket.on('disconnect', (reason) => {
+            console.log('Disconnected from server:', reason);
+            gameState.connectionStatus = 'disconnected';
+            updateServerStatus(false);
+            
+            if (reason === 'io server disconnect') {
+                // Server initiated disconnect, show error
+                showErrorModal('Disconnected by server. Please refresh the page.');
+            } else {
+                // Temporary disconnect, show reconnecting message
+                showLoadingScreen('Reconnecting to server...');
+            }
+        });
+        
+        gameState.socket.on('reconnect_attempt', (attempt) => {
+            console.log('Reconnection attempt:', attempt);
+            gameState.reconnectAttempts = attempt;
+            showLoadingScreen(`Reconnecting to server... (Attempt ${attempt + 1}/5)`);
+        });
+        
+        gameState.socket.on('reconnect_failed', () => {
+            console.log('Failed to reconnect');
+            gameState.connectionStatus = 'disconnected';
+            updateServerStatus(false);
+            showErrorModal('Failed to connect to server. Please refresh the page.');
+        });
+        
+        // Enhanced game events with error handling
+        gameState.socket.on('playerId', (playerId) => {
+            gameState.playerId = playerId;
+            console.log('Received player ID:', playerId);
+        });
+        
+        gameState.socket.on('roomCreated', (data) => {
+            handleRoomCreated(data);
+        });
+        
+        gameState.socket.on('roomJoined', (data) => {
+            handleRoomJoined(data);
+        });
+        
+        gameState.socket.on('playerJoined', (players) => {
+            handlePlayerJoined(players);
+        });
+        
+        gameState.socket.on('playerLeft', (players) => {
+            handlePlayerLeft(players);
+        });
+        
+        gameState.socket.on('gameStarted', (data) => {
+            handleGameStarted(data);
+        });
+        
+        gameState.socket.on('cardsPlayed', (data) => {
+            handleCardsPlayed(data);
+        });
+        
+        gameState.socket.on('turnSkipped', (data) => {
+            handleTurnSkipped(data);
+        });
+        
+        gameState.socket.on('challengeResult', (data) => {
+            handleChallengeResult(data);
+        });
+        
+        gameState.socket.on('playerWon', (data) => {
+            handlePlayerWon(data);
+        });
+        
+        gameState.socket.on('error', (message) => {
+            showErrorModal(message);
+        });
+    }
+    
+    // Enhanced room creation handler
+    function handleRoomCreated(data) {
+        gameState.roomCode = data.roomCode;
+        gameState.isHost = true;
+        gameState.maxPlayers = data.maxPlayers;
+        gameState.playerName = data.playerName;
+        
+        // Update lobby UI
+        elements.displayRoomCode.textContent = gameState.roomCode;
+        elements.maxPlayers.textContent = gameState.maxPlayers;
+        updateLobbyPlayers([{ 
+            id: gameState.playerId, 
+            name: gameState.playerName, 
+            isHost: true 
+        }]);
+        
+        // Show lobby
+        transitionToScreen(elements.mainMenu, elements.roomLobby);
+    }
+    
+    // Enhanced player joined handler
+    function handlePlayerJoined(players) {
+        updateLobbyPlayers(players);
+        
+        // Show notification
+        const newPlayer = players[players.length - 1];
+        if (newPlayer.id !== gameState.playerId) {
+            showToast(`${newPlayer.name} joined the room`);
+        }
+        
+        // Enable start game button if host and enough players
+        if (gameState.isHost && players.length >= 3) {
+            elements.startGameBtn.disabled = false;
+        }
+    }
+    
+    // Enhanced game start handler
+    function handleGameStarted(data) {
+        gameState.players = data.players;
+        gameState.playerCards = data.playerCards;
+        gameState.currentPlayerIndex = data.currentPlayerIndex;
+        gameState.gameStarted = true;
+        
+        // Update UI
+        transitionToScreen(elements.roomLobby, elements.gameArea);
+        
+        // Check if it's our turn
+        checkIfMyTurn();
+        
+        // Update game UI
+        updateGameUI();
+        populateClaimSelect();
+        
+        // Log initial game state
+        const firstPlayer = gameState.players[gameState.currentPlayerIndex];
+        addToGameLog(`Game started! ${firstPlayer.name} goes first.`);
+        
+        // Show notification if it's our turn
+        if (gameState.isMyTurn) {
+            showToast("It's your turn! Play cards or skip.");
+        }
+    }
+    
+    // Enhanced cards played handler
+    function handleCardsPlayed(data) {
+        gameState.currentPlay = data.currentPlay;
+        gameState.discardPile = data.discardPile;
+        gameState.currentPlayerIndex = data.currentPlayerIndex;
+        gameState.consecutiveSkips = 0;
+        
+        // Update player cards if it's us
+        if (data.playerId === gameState.playerId) {
+            gameState.playerCards = data.playerCards;
+        }
+        
+        // Update UI
+        updateGameUI();
+        
+        // Log the play
+        const player = gameState.players.find(p => p.id === data.currentPlay.playerId);
+        const playerName = player?.name || 'Unknown';
+        addToGameLog(`${playerName} played ${data.currentPlay.cards.length} card(s) claiming ${data.currentPlay.claim.count} ${data.currentPlay.claim.value}${data.currentPlay.claim.count > 1 ? 's' : ''}`);
+        
+        // Show notification if it's now our turn
+        if (gameState.isMyTurn) {
+            showToast("It's your turn! Play cards or skip.");
+        }
+    }
+    
+    // New function to handle screen transitions
+    function transitionToScreen(fromElement, toElement) {
+        fromElement.classList.add('hidden');
+        toElement.classList.remove('hidden');
+        toElement.classList.add('animate-fadeIn');
+        
+        // Remove animation class after it completes
+        setTimeout(() => {
+            toElement.classList.remove('animate-fadeIn');
+        }, 300);
+    }
+    
+    // New function to update all game UI
+    function updateGameUI() {
+        updatePlayersList();
+        updatePlayerCards();
+        updateDiscardPile();
+        updateCurrentPlay();
+        checkIfMyTurn();
+        updateActionButtons();
+    }
+        // 3. UI UPDATE FUNCTIONS ========================================
+        function updatePlayersList() {
+        elements.playersList.innerHTML = '';
+        gameState.players.forEach((player, index) => {
+            const playerEl = document.createElement('div');
+            playerEl.className = `bg-gray-700 bg-opacity-50 rounded-lg p-3 ${index === gameState.currentPlayerIndex ? 'player-active' : ''}`;
+            playerEl.innerHTML = `
+                <div class="flex justify-between items-center">
+                    <div>
+                        <span class="font-medium">${player.name}</span>
+                        <span class="text-sm text-gray-400 ml-2">(${gameState.playerCards[index].length} cards)</span>
+                    </div>
+                    ${index === gameState.currentPlayerIndex ? '<span class="bg-green-500 text-xs px-2 py-1 rounded-full">Current</span>' : ''}
+                </div>
+            `;
+            elements.playersList.appendChild(playerEl);
+        });
+    }
+
+    function updatePlayerCards() {
+        elements.playerCardsContainer.innerHTML = '';
+        const playerIndex = gameState.players.findIndex(p => p.id === gameState.playerId);
+        gameState.playerCards[playerIndex].forEach((card, index) => {
+            const cardEl = document.createElement('div');
+            cardEl.className = 'card';
+            cardEl.innerHTML = `
+                <div class="card-inner">
+                    <div class="card-front">
+                        <div class="flex flex-col items-center">
+                            <span class="${['♥','♦'].includes(card.suit) ? 'text-red-500' : 'text-black'}">
+                                ${card.value}
+                            </span>
+                            <span class="${['♥','♦'].includes(card.suit) ? 'text-red-500' : 'text-black'}">
+                                ${card.suit}
+                            </span>
+                        </div>
+                    </div>
+                    <div class="card-back"></div>
+                </div>
+            `;
+            cardEl.addEventListener('click', () => toggleCardSelection(cardEl, index));
+            elements.playerCardsContainer.appendChild(cardEl);
+        });
+    }
+
+    function updateActionButtons() {
+        elements.playCardsBtn.disabled = !gameState.isMyTurn || selectedCards.length === 0;
+        elements.skipBtn.disabled = !gameState.isMyTurn;
+        elements.challengeBtn.disabled = !gameState.isMyTurn || !gameState.currentPlay;
+    }
+
+    // 4. SOCKET HANDLERS ============================================
+    function handleGameStarted(data) {
+        gameState.players = data.players;
+        gameState.playerCards = data.playerCards;
+        gameState.currentPlayerIndex = data.currentPlayerIndex;
+        gameState.gameStarted = true;
+        
+        elements.roomLobby.classList.add('hidden');
+        elements.gameArea.classList.remove('hidden');
+        updateGameUI();
+        addToGameLog(`Game started! ${gameState.players[0].name} goes first.`);
+    }
+
+    function handleCardsPlayed(data) {
+        gameState.currentPlay = data.currentPlay;
+        gameState.discardPile = data.discardPile;
+        gameState.currentPlayerIndex = data.currentPlayerIndex;
+        updateGameUI();
+        addToGameLog(`${data.playerName} played ${data.cards.length} cards as ${data.claim.value}s`);
+    }
+    // Enhanced error handling
+    function showErrorModal(message) {
+        const errorModal = document.createElement('div');
+        errorModal.className = 'fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 px-4';
+        errorModal.innerHTML = `
+            <div class="bg-gray-800 rounded-xl max-w-md w-full p-6">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-2xl font-bold text-red-500">Error</h2>
+                    <button id="close-error-modal" class="text-gray-400 hover:text-white">
+                        <i class="fas fa-times text-2xl"></i>
+                    </button>
+                </div>
+                <p class="mb-6">${message}</p>
+                <button id="refresh-page-btn" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg transition">
+                    Refresh Page
+                </button>
+            </div>
+        `;
+        
+        document.body.appendChild(errorModal);
+        
+        // Add event listeners
+        errorModal.querySelector('#close-error-modal').addEventListener('click', () => {
+            errorModal.remove();
+        });
+        
+        errorModal.querySelector('#refresh-page-btn').addEventListener('click', () => {
+            window.location.reload();
+        });
+    }
+    
+    // Enhanced loading screen
+    function showLoadingScreen(message = 'Loading...') {
+        elements.loadingScreen.innerHTML = `
+            <div class="text-center">
+                <div class="loader mx-auto mb-4"></div>
+                <p class="text-xl">${message}</p>
+                ${gameState.reconnectAttempts > 0 ? 
+                    `<p class="text-sm text-gray-400 mt-2">Attempt ${gameState.reconnectAttempts + 1} of 5</p>` : ''}
+            </div>
+        `;
+        elements.loadingScreen.classList.remove('hidden');
+    }
+    
+    function hideLoadingScreen() {
+        elements.loadingScreen.classList.add('hidden');
+    }
+    
+    
+    // Set up all event listeners
+    function setupEventListeners() {
+        // Game action buttons
+        elements.playCardsBtn.addEventListener('click', playCards);
+        elements.skipBtn.addEventListener('click', skipTurn);
+        elements.challengeBtn.addEventListener('click', challengePlay);
+        elements.newGameBtn.addEventListener('click', () => {
+            gameState.socket.emit('newGame', { roomCode: gameState.roomCode });
+        });
+        
+        // Menu buttons
+        elements.createRoomBtn.addEventListener('click', () => {
+            elements.createRoomModal.classList.remove('hidden');
+        });
+        
+        elements.joinRoomBtn.addEventListener('click', () => {
+            elements.joinRoomModal.classList.remove('hidden');
+        });
+        
+        elements.rulesMenuBtn.addEventListener('click', () => {
+            elements.rulesModal.classList.remove('hidden');
+        });
+        
+        elements.closeCreateRoom.addEventListener('click', () => {
+            elements.createRoomModal.classList.add('hidden');
+        });
+        
+        elements.closeJoinRoom.addEventListener('click', () => {
+            elements.joinRoomModal.classList.add('hidden');
+        });
+        
+        // Room creation/joining
+        elements.startRoomBtn.addEventListener('click', () => {
+            const name = elements.hostName.value.trim();
+            const playerCount = parseInt(elements.playerCount.value);
+            
+            if (!name) {
+                showToast('Please enter your name');
+                return;
+            }
+            
+            gameState.playerName = name;
+            gameState.socket.emit('createRoom', {
+                playerName: name,
+                maxPlayers: playerCount
+            });
+        });
+        
+        elements.joinRoomSubmit.addEventListener('click', () => {
+            const name = elements.playerName.value.trim();
+            const roomCode = elements.roomCode.value.trim().toUpperCase();
+            
+            if (!name) {
+                showToast('Please enter your name');
+                return;
+            }
+            
+            if (!roomCode || roomCode.length !== 5) {
+                showToast('Please enter a valid 5-character room code');
+                return;
+            }
+            
+            gameState.playerName = name;
+            gameState.socket.emit('joinRoom', {
+                playerName: name,
+                roomCode: roomCode
+            });
+        });
+        
+        // Lobby controls
+        elements.copyRoomCode.addEventListener('click', () => {
+            navigator.clipboard.writeText(gameState.roomCode).then(() => {
+                showToast('Room code copied to clipboard!');
+            });
+        });
+        
+        elements.leaveLobbyBtn.addEventListener('click', () => {
+            gameState.socket.emit('leaveRoom', {
+                roomCode: gameState.roomCode,
+                playerId: gameState.playerId
+            });
+            transitionToScreen(elements.roomLobby, elements.mainMenu);
+        });
+        
+        elements.startGameBtn.addEventListener('click', () => {
+            gameState.socket.emit('startGame', {
+                roomCode: gameState.roomCode
+            });
+        });
+        
+        // Modal controls
+        elements.closeRulesBtns.forEach(btn => {
+            btn.addEventListener('click', () => {
+                elements.rulesModal.classList.add('hidden');
+            });
+        });
+        
+        elements.newGameWinnerBtn.addEventListener('click', () => {
+            elements.winnerModal.classList.add('hidden');
+            gameState.socket.emit('newGame', { roomCode: gameState.roomCode });
+        });
+        
+        elements.closeWinnerBtn.addEventListener('click', () => {
+            elements.winnerModal.classList.add('hidden');
+        });
+    }
+
+</script>

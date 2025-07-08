@@ -1,0 +1,1245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fake Card Challenge - Multiplayer Bluffing Game</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=Poppins:wght@400;600&display=swap');
+        
+        body {
+            font-family: 'Poppins', sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+        }
+        
+        .title-font {
+            font-family: 'Playfair Display', serif;
+        }
+        
+        .card {
+            width: 80px;
+            height: 120px;
+            perspective: 1000px;
+            cursor: pointer;
+            transition: transform 0.3s;
+        }
+        
+        .card:hover {
+            transform: translateY(-10px);
+        }
+        
+        .card-inner {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            transform-style: preserve-3d;
+            transition: transform 0.6s;
+        }
+        
+        .card.flipped .card-inner {
+            transform: rotateY(180deg);
+        }
+        
+        .card-front, .card-back {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            backface-visibility: hidden;
+            border-radius: 8px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        }
+        
+        .card-front {
+            background: white;
+            color: black;
+            font-size: 24px;
+            font-weight: bold;
+        }
+        
+        .card-back {
+            background: linear-gradient(45deg, #ff416c, #ff4b2b);
+            color: white;
+            transform: rotateY(180deg);
+        }
+        
+        .discard-pile {
+            width: 80px;
+            height: 120px;
+            background: rgba(255,255,255,0.1);
+            border: 2px dashed rgba(255,255,255,0.3);
+            border-radius: 8px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: rgba(255,255,255,0.5);
+        }
+        
+        .player-active {
+            box-shadow: 0 0 0 3px #4ade80;
+        }
+        
+        .player-skipped {
+            opacity: 0.7;
+        }
+        
+        .confetti {
+            position: absolute;
+            width: 10px;
+            height: 10px;
+            background-color: #f00;
+            border-radius: 50%;
+            animation: fall 5s linear infinite;
+        }
+        
+        @keyframes fall {
+            to {
+                transform: translateY(100vh) rotate(360deg);
+                opacity: 0;
+            }
+        }
+        
+        .tooltip {
+            position: relative;
+        }
+        
+        .tooltip-text {
+            visibility: hidden;
+            width: 200px;
+            background-color: #333;
+            color: #fff;
+            text-align: center;
+            border-radius: 6px;
+            padding: 5px;
+            position: absolute;
+            z-index: 1;
+            bottom: 125%;
+            left: 50%;
+            transform: translateX(-50%);
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+        
+        .tooltip:hover .tooltip-text {
+            visibility: visible;
+            opacity: 1;
+        }
+        
+        .room-code {
+            font-family: 'Courier New', monospace;
+            letter-spacing: 2px;
+        }
+        
+        .copy-btn {
+            transition: all 0.3s;
+        }
+        
+        .copy-btn:hover {
+            transform: scale(1.05);
+        }
+        
+        .copy-btn.copied {
+            background-color: #10b981 !important;
+        }
+        
+        /* Server status indicator */
+        .server-status {
+            position: fixed;
+            bottom: 10px;
+            right: 10px;
+            padding: 5px 10px;
+            border-radius: 20px;
+            font-size: 12px;
+            z-index: 1000;
+        }
+        
+        .server-status.connected {
+            background-color: #10b981;
+            color: white;
+        }
+        
+        .server-status.disconnected {
+            background-color: #ef4444;
+            color: white;
+        }
+        
+        /* Loading spinner */
+        .loader {
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top: 4px solid #ffffff;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="text-white">
+    <!-- Server Connection Status -->
+    <div id="server-status" class="server-status disconnected hidden">
+        <i class="fas fa-circle"></i> <span>Disconnected</span>
+    </div>
+
+    <!-- Main Menu -->
+    <div id="main-menu" class="fixed inset-0 flex items-center justify-center px-4">
+        <div class="bg-gray-800 rounded-xl max-w-md w-full p-8 shadow-2xl">
+            <div class="text-center mb-8">
+                <h1 class="title-font text-4xl md:text-5xl font-bold mb-2 text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 to-red-500">
+                    Fake Card Challenge
+                </h1>
+                <p class="text-lg text-gray-300">Multiplayer bluff-based reverse card game</p>
+            </div>
+            
+            <div class="space-y-4">
+                <button id="create-room-btn" class="w-full bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-700 hover:to-blue-600 text-white font-bold py-3 px-4 rounded-lg transition flex items-center justify-center">
+                    <i class="fas fa-plus-circle mr-3 text-xl"></i> Create New Room
+                </button>
+                
+                <button id="join-room-btn" class="w-full bg-gradient-to-r from-purple-600 to-purple-500 hover:from-purple-700 hover:to-purple-600 text-white font-bold py-3 px-4 rounded-lg transition flex items-center justify-center">
+                    <i class="fas fa-sign-in-alt mr-3 text-xl"></i> Join Existing Room
+                </button>
+                
+                <button id="rules-menu-btn" class="w-full bg-gray-700 hover:bg-gray-600 text-white font-bold py-3 px-4 rounded-lg transition flex items-center justify-center">
+                    <i class="fas fa-book mr-3 text-xl"></i> Game Rules
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Create Room Modal -->
+    <div id="create-room-modal" class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center hidden px-4 z-50">
+        <div class="bg-gray-800 rounded-xl max-w-md w-full p-6">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-2xl font-bold">Create Game Room</h2>
+                <button id="close-create-room" class="text-gray-400 hover:text-white">
+                    <i class="fas fa-times text-2xl"></i>
+                </button>
+            </div>
+            
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium mb-1">Your Name</label>
+                    <input type="text" id="host-name" class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Enter your name">
+                </div>
+                
+                <div>
+                    <label class="block text-sm font-medium mb-1">Number of Players</label>
+                    <select id="player-count" class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="3">3 Players</option>
+                        <option value="4">4 Players</option>
+                        <option value="5">5 Players</option>
+                        <option value="6">6 Players</option>
+                    </select>
+                </div>
+                
+                <div class="pt-2">
+                    <button id="start-room-btn" class="w-full bg-gradient-to-r from-green-600 to-green-500 hover:from-green-700 hover:to-green-600 text-white font-bold py-3 px-4 rounded-lg transition">
+                        Create Room
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Join Room Modal -->
+    <div id="join-room-modal" class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center hidden px-4 z-50">
+        <div class="bg-gray-800 rounded-xl max-w-md w-full p-6">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-2xl font-bold">Join Game Room</h2>
+                <button id="close-join-room" class="text-gray-400 hover:text-white">
+                    <i class="fas fa-times text-2xl"></i>
+                </button>
+            </div>
+            
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium mb-1">Your Name</label>
+                    <input type="text" id="player-name" class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Enter your name">
+                </div>
+                
+                <div>
+                    <label class="block text-sm font-medium mb-1">Room Code</label>
+                    <input type="text" id="room-code" class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Enter room code">
+                </div>
+                
+                <div class="pt-2">
+                    <button id="join-room-submit" class="w-full bg-gradient-to-r from-purple-600 to-purple-500 hover:from-purple-700 hover:to-purple-600 text-white font-bold py-3 px-4 rounded-lg transition">
+                        Join Room
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Room Lobby -->
+    <div id="room-lobby" class="fixed inset-0 bg-gray-900 flex items-center justify-center hidden px-4 z-40">
+        <div class="bg-gray-800 rounded-xl max-w-2xl w-full p-6">
+            <div class="flex justify-between items-center mb-6">
+                <div>
+                    <h2 class="text-2xl font-bold">Room Lobby</h2>
+                    <div class="flex items-center mt-1">
+                        <span class="text-gray-400 mr-2">Room Code:</span>
+                        <span id="display-room-code" class="room-code font-mono bg-gray-700 px-3 py-1 rounded-lg"></span>
+                        <button id="copy-room-code" class="copy-btn ml-2 bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded-lg text-sm">
+                            <i class="fas fa-copy mr-1"></i> Copy
+                        </button>
+                    </div>
+                </div>
+                <div>
+                    <span id="player-count-display" class="bg-blue-600 text-white px-3 py-1 rounded-lg text-sm">
+                        <i class="fas fa-users mr-1"></i> <span id="current-players">1</span>/<span id="max-players">3</span>
+                    </span>
+                </div>
+            </div>
+            
+            <div class="bg-gray-700 bg-opacity-50 rounded-lg p-4 mb-6">
+                <h3 class="font-medium mb-3">Players Joined</h3>
+                <div id="lobby-players" class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <!-- Players will be added here -->
+                </div>
+            </div>
+            
+            <div class="flex justify-between items-center">
+                <button id="leave-lobby-btn" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg transition">
+                    <i class="fas fa-sign-out-alt mr-2"></i> Leave Lobby
+                </button>
+                
+                <button id="start-game-btn" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg transition disabled:opacity-50" disabled>
+                    <i class="fas fa-play mr-2"></i> Start Game
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Game Area (hidden by default) -->
+    <div id="game-area" class="container mx-auto px-4 py-8 hidden">
+        <!-- Header -->
+        <header class="text-center mb-8">
+            <h1 class="title-font text-4xl md:text-5xl font-bold mb-2 text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 to-red-500">
+                Fake Card Challenge
+            </h1>
+            <p class="text-lg text-gray-300">A bluff-based reverse card game where deception is your best weapon!</p>
+        </header>
+        
+        <!-- Game Area -->
+        <div class="flex flex-col lg:flex-row gap-8">
+            <!-- Left Panel - Game Board -->
+            <div class="flex-1">
+                <!-- Game Controls -->
+                <div class="bg-gray-800 bg-opacity-50 rounded-lg p-4 mb-6">
+                    <div class="flex justify-between items-center mb-4">
+                        <h2 class="text-xl font-semibold">Game Controls</h2>
+                        <div class="flex gap-2">
+                            <button id="new-game-btn" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg transition">
+                                <i class="fas fa-redo mr-2"></i>New Game
+                            </button>
+                            <button id="rules-btn" class="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded-lg transition">
+                                <i class="fas fa-book mr-2"></i>Rules
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-4">
+                        <div class="bg-gray-700 bg-opacity-50 p-4 rounded-lg">
+                            <h3 class="font-medium mb-2">Current Play</h3>
+                            <div id="current-play" class="flex items-center gap-2">
+                                <div class="discard-pile">
+                                    <i class="fas fa-question text-2xl"></i>
+                                </div>
+                                <span id="current-claim" class="text-gray-300">No cards played yet</span>
+                            </div>
+                        </div>
+                        
+                        <div class="bg-gray-700 bg-opacity-50 p-4 rounded-lg">
+                            <h3 class="font-medium mb-2">Actions</h3>
+                            <div class="flex flex-wrap gap-2">
+                                <button id="play-cards-btn" class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg transition disabled:opacity-50" disabled>
+                                    <i class="fas fa-play mr-2"></i>Play Cards
+                                </button>
+                                <button id="skip-btn" class="bg-yellow-600 hover:bg-yellow-700 px-4 py-2 rounded-lg transition disabled:opacity-50" disabled>
+                                    <i class="fas fa-forward mr-2"></i>Skip
+                                </button>
+                                <button id="challenge-btn" class="bg-red-600 hover:bg-red-700 px-4 py-2 rounded-lg transition disabled:opacity-50" disabled>
+                                    <i class="fas fa-gavel mr-2"></i>Challenge
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Discard Pile -->
+                <div class="bg-gray-800 bg-opacity-50 rounded-lg p-4 mb-6">
+                    <h2 class="text-xl font-semibold mb-4">Discard Pile</h2>
+                    <div id="discard-pile" class="flex flex-wrap gap-2 min-h-32">
+                        <div class="discard-pile">
+                            <i class="fas fa-layer-group text-2xl"></i>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Player Cards -->
+                <div class="bg-gray-800 bg-opacity-50 rounded-lg p-4">
+                    <h2 class="text-xl font-semibold mb-4">Your Cards</h2>
+                    <div id="player-cards" class="flex flex-wrap gap-2 min-h-32">
+                        <!-- Cards will be added here by JavaScript -->
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Right Panel - Players Info -->
+            <div class="w-full lg:w-80">
+                <div class="bg-gray-800 bg-opacity-50 rounded-lg p-4 sticky top-4">
+                    <h2 class="text-xl font-semibold mb-4">Players</h2>
+                    <div id="players-list" class="space-y-3">
+                        <!-- Players will be added here by JavaScript -->
+                    </div>
+                    
+                    <div class="mt-6">
+                        <h3 class="font-medium mb-2">Game Log</h3>
+                        <div id="game-log" class="bg-gray-900 bg-opacity-50 rounded-lg p-3 h-48 overflow-y-auto text-sm space-y-2">
+                            <div class="text-gray-400">Game log will appear here...</div>
+                        </div>
+                    </div>
+                    
+                    <div class="mt-6 bg-gray-900 bg-opacity-30 p-4 rounded-lg">
+                        <h3 class="font-medium mb-2">Card Claim</h3>
+                        <div class="mb-3">
+                            <label class="block text-sm mb-1">What are you claiming?</label>
+                            <select id="claim-select" class="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white">
+                                <option value="">Select a card value</option>
+                                <!-- Options will be added by JavaScript -->
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm mb-1">How many cards?</label>
+                            <input id="claim-count" type="number" min="1" value="1" class="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Rules Modal -->
+    <div id="rules-modal" class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center hidden z-50 px-4">
+        <div class="bg-gray-800 rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div class="p-6">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-2xl font-bold">Game Rules</h2>
+                    <button id="close-rules-btn" class="text-gray-400 hover:text-white">
+                        <i class="fas fa-times text-2xl"></i>
+                    </button>
+                </div>
+                
+                <div class="space-y-4">
+                    <div>
+                        <h3 class="text-lg font-semibold mb-2">🎮 Game Overview</h3>
+                        <p class="text-gray-300">"Fake Card Challenge" is a hilarious, high-stakes bluffing card game where the goal is to get rid of all your cards. Play one or more cards face-down, boldly announce what they are (truth or lie), and hope no one challenges you!</p>
+                    </div>
+                    
+                    <div>
+                        <h3 class="text-lg font-semibold mb-2">👥 Players</h3>
+                        <p class="text-gray-300">3 to 6 players</p>
+                    </div>
+                    
+                    <div>
+                        <h3 class="text-lg font-semibold mb-2">🎯 Objective</h3>
+                        <p class="text-gray-300">Be the first player to get rid of all your cards, by playing truthfully, bluffing smartly, or letting others trip up.</p>
+                    </div>
+                    
+                    <div>
+                        <h3 class="text-lg font-semibold mb-2">🧩 Setup</h3>
+                        <ul class="list-disc pl-5 space-y-1 text-gray-300">
+                            <li>Use a standard 52-card deck (plus Jokers if you like)</li>
+                            <li>Shuffle and deal all cards equally to players</li>
+                            <li>Place a face-down discard pile in the center</li>
+                            <li>Choose who goes first randomly</li>
+                        </ul>
+                    </div>
+                    
+                    <div>
+                        <h3 class="text-lg font-semibold mb-2">📜 Gameplay Rules</h3>
+                        <div class="space-y-3">
+                            <div class="bg-gray-700 bg-opacity-50 p-3 rounded-lg">
+                                <h4 class="font-medium">1. Your Turn</h4>
+                                <p class="text-gray-300 mt-1">On your turn, you can either:</p>
+                                <ul class="list-disc pl-5 space-y-1 text-gray-300 mt-1">
+                                    <li>Play 1 or more cards face-down into the center pile (e.g., "These are two 9s" or "Three Queens")</li>
+                                    <li>Skip your turn (say "skip" and do nothing)</li>
+                                </ul>
+                                <p class="text-gray-300 mt-1">You can bluff or be honest about your play.</p>
+                            </div>
+                            
+                            <div class="bg-gray-700 bg-opacity-50 p-3 rounded-lg">
+                                <h4 class="font-medium">2. The Challenge Option</h4>
+                                <p class="text-gray-300 mt-1">The next player (or any player after that) may challenge the last face-down play.</p>
+                                <ul class="list-disc pl-5 space-y-1 text-gray-300 mt-1">
+                                    <li>Say: "I challenge!" to call a bluff</li>
+                                    <li>Reveal the last set of played cards</li>
+                                    <li>If the player lied → They take the entire discard pile</li>
+                                    <li>If the player told the truth → The challenger takes the entire discard pile</li>
+                                </ul>
+                            </div>
+                            
+                            <div class="bg-gray-700 bg-opacity-50 p-3 rounded-lg">
+                                <h4 class="font-medium">3. Skipping Rule</h4>
+                                <p class="text-gray-300 mt-1">Any player can skip their turn.</p>
+                                <ul class="list-disc pl-5 space-y-1 text-gray-300 mt-1">
+                                    <li>If ALL remaining players skip in a row after a card has been played:</li>
+                                    <li>The last person who placed cards gets to start the new round</li>
+                                    <li>They can declare a new set of cards with a fresh bluff or truth</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div>
+                        <h3 class="text-lg font-semibold mb-2">🏆 Winning</h3>
+                        <p class="text-gray-300">The first player to discard all their cards is the winner!</p>
+                    </div>
+                </div>
+                
+                <div class="mt-6 text-center">
+                    <button id="close-rules-btn-2" class="bg-purple-600 hover:bg-purple-700 px-6 py-2 rounded-lg transition">
+                        Got it!
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Winner Modal -->
+    <div id="winner-modal" class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center hidden z-50 px-4">
+        <div class="bg-gradient-to-br from-yellow-500 to-red-600 rounded-lg max-w-md w-full p-8 text-center">
+            <h2 class="text-3xl font-bold mb-4">🎉 Winner! 🎉</h2>
+            <p id="winner-text" class="text-xl mb-6">Player 1 has won the game!</p>
+            <div class="flex justify-center gap-4">
+                <button id="new-game-winner-btn" class="bg-white text-yellow-700 hover:bg-gray-100 px-6 py-2 rounded-lg transition font-semibold">
+                    Play Again
+                </button>
+                <button id="close-winner-btn" class="bg-black bg-opacity-30 hover:bg-opacity-50 px-6 py-2 rounded-lg transition border border-white">
+                    Close
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Loading Screen -->
+    <div id="loading-screen" class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center hidden z-50">
+        <div class="text-center">
+            <div class="loader mx-auto mb-4"></div>
+            <p class="text-xl">Connecting to server...</p>
+        </div>
+    </div>
+    <script>
+    const gameState = {
+        players: [],
+        currentPlayerIndex: 0,
+        discardPile: [],
+        currentPlay: null,
+        consecutiveSkips: 0,
+        gameLog: [],
+        deck: [],
+        playerCards: [],
+        gameStarted: false,
+        roomCode: '',
+        isHost: false,
+        playerName: '',
+        maxPlayers: 3,
+        playerId: '',
+        socket: null,
+        isMyTurn: false,
+        connectionStatus: 'disconnected',
+        reconnectAttempts: 0
+    };
+
+    // Card values and suits
+    // 1. GLOBAL VARIABLES ============================================
+    const cardValues = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
+    const cardSuits = ['♥', '♦', '♣', '♠'];
+    let selectedCards = [];
+    let elements;
+
+    // Initialize the game when DOM is loaded
+    window.addEventListener('DOMContentLoaded', () => {
+        initializeElements();
+        initSocketConnection();
+    });
+
+    function initializeElements() {
+        elements = {
+            mainMenu: document.getElementById('main-menu'),
+            createRoomModal: document.getElementById('create-room-modal'),
+            joinRoomModal: document.getElementById('join-room-modal'),
+            roomLobby: document.getElementById('room-lobby'),
+            gameArea: document.getElementById('game-area'),
+            playerCardsContainer: document.getElementById('player-cards'),
+            playersList: document.getElementById('players-list'),
+            discardPileContainer: document.getElementById('discard-pile'),
+            currentPlayDisplay: document.getElementById('current-play'),
+            currentClaimText: document.getElementById('current-claim'),
+            gameLog: document.getElementById('game-log'),
+            playCardsBtn: document.getElementById('play-cards-btn'),
+            skipBtn: document.getElementById('skip-btn'),
+            challengeBtn: document.getElementById('challenge-btn'),
+            newGameBtn: document.getElementById('new-game-btn'),
+            rulesBtn: document.getElementById('rules-btn'),
+            rulesModal: document.getElementById('rules-modal'),
+            closeRulesBtns: document.querySelectorAll('.close-rules-btn'),
+            winnerModal: document.getElementById('winner-modal'),
+            winnerText: document.getElementById('winner-text'),
+            newGameWinnerBtn: document.getElementById('new-game-winner-btn'),
+            closeWinnerBtn: document.getElementById('close-winner-btn'),
+            claimSelect: document.getElementById('claim-select'),
+            claimCount: document.getElementById('claim-count'),
+            selectedCount: document.getElementById('selected-count'),
+            createRoomBtn: document.getElementById('create-room-btn'),
+            joinRoomBtn: document.getElementById('join-room-btn'),
+            rulesMenuBtn: document.getElementById('rules-menu-btn'),
+            closeCreateRoom: document.getElementById('close-create-room'),
+            closeJoinRoom: document.getElementById('close-join-room'),
+            hostName: document.getElementById('host-name'),
+            playerCount: document.getElementById('player-count'),
+            startRoomBtn: document.getElementById('start-room-btn'),
+            playerName: document.getElementById('player-name'),
+            roomCode: document.getElementById('room-code'),
+            joinRoomSubmit: document.getElementById('join-room-submit'),
+            displayRoomCode: document.getElementById('display-room-code'),
+            copyRoomCode: document.getElementById('copy-room-code'),
+            currentPlayers: document.getElementById('current-players'),
+            maxPlayers: document.getElementById('max-players'),
+            lobbyPlayers: document.getElementById('lobby-players'),
+            leaveLobbyBtn: document.getElementById('leave-lobby-btn'),
+            startGameBtn: document.getElementById('start-game-btn'),
+            loadingScreen: document.getElementById('loading-screen'),
+            serverStatus: document.getElementById('server-status')
+        };
+        
+        setupEventListeners();
+    }
+
+    function showLoadingScreen(message = 'Loading...') {
+        if (!elements.loadingScreen) return;
+        
+        elements.loadingScreen.innerHTML = `
+            <div class="text-center">
+                <div class="loader mx-auto mb-4"></div>
+                <p class="text-xl">${message}</p>
+                ${gameState.reconnectAttempts > 0 ? 
+                    `<p class="text-sm text-gray-400 mt-2">Attempt ${gameState.reconnectAttempts + 1} of 5</p>` : ''}
+            </div>
+        `;
+        elements.loadingScreen.classList.remove('hidden');
+    }
+    // Enhanced card selection with animations
+    function toggleCardSelection(cardEl, index) {
+        const isSelected = selectedCards.includes(index);
+        
+        if (isSelected) {
+            selectedCards = selectedCards.filter(i => i !== index);
+            cardEl.classList.remove('selected', 'card-play-animation');
+        } else {
+            // Limit selection based on game rules
+            if (selectedCards.length >= 4) {
+                showToast('You can select up to 4 cards at once');
+                return;
+            }
+            
+            selectedCards.push(index);
+            cardEl.classList.add('selected', 'card-play-animation');
+            
+            // Remove animation class after it completes
+            setTimeout(() => {
+                cardEl.classList.remove('card-play-animation');
+            }, 300);
+        }
+        
+        // Update claim count display
+        elements.selectedCount.textContent = `(${selectedCards.length} selected)`;
+        elements.claimCount.value = selectedCards.length;
+        
+        // Enable/disable play button
+        elements.playCardsBtn.disabled = selectedCards.length === 0 || !gameState.isMyTurn;
+    }
+     // 2. CORE GAME FUNCTIONS ========================================
+     function skipTurn() {
+        if (!gameState.isMyTurn) return;
+        gameState.socket.emit('skipTurn', {
+            roomCode: gameState.roomCode,
+            playerId: gameState.playerId
+        });
+    }
+
+    function challengePlay() {
+        if (!gameState.currentPlay || !gameState.isMyTurn) return;
+        gameState.socket.emit('challenge', {
+            roomCode: gameState.roomCode,
+            playerId: gameState.playerId
+        });
+    }
+    // Enhanced playCards function with validation
+    function playCards() {
+        if (selectedCards.length === 0 || !gameState.isMyTurn) {
+            showToast('Please select cards to play');
+            return;
+        }
+        
+        const claimValue = elements.claimSelect.value;
+        if (!claimValue) {
+            showToast('Please select a card value to claim');
+            return;
+        }
+        
+        // Get the selected cards
+        const currentPlayerIndex = gameState.players.findIndex(p => p.id === gameState.playerId);
+        const cardsToPlay = selectedCards.map(index => {
+            return gameState.playerCards[currentPlayerIndex][index];
+        });
+        
+        // Emit play cards event to server
+        gameState.socket.emit('playCards', {
+            roomCode: gameState.roomCode,
+            playerId: gameState.playerId,
+            cardIndices: selectedCards,
+            claim: {
+                value: claimValue,
+                count: selectedCards.length // Use actual selected count
+            }
+        });
+        
+        // Clear selection
+        selectedCards = [];
+        elements.selectedCount.textContent = '(0 selected)';
+    }
+    
+    // New function to show toast messages
+    function showToast(message, duration = 3000) {
+        const toast = document.createElement('div');
+        toast.className = 'fixed bottom-4 left-1/2 transform -translate-x-1/2 bg-gray-800 text-white px-4 py-2 rounded-lg shadow-lg z-50';
+        toast.textContent = message;
+        document.body.appendChild(toast);
+        
+        setTimeout(() => {
+            toast.classList.add('opacity-0', 'transition-opacity', 'duration-300');
+            setTimeout(() => toast.remove(), 300);
+        }, duration);
+    }
+    
+    // Enhanced server connection handling
+    function initSocketConnection() {
+        showLoadingScreen('Connecting to server...');
+        
+        // For development, connect to local server
+        // In production, you would connect to your actual server
+        const socketUrl = window.location.hostname === '127.0.0.1' ? 
+            'http://127.0.0.1:5500/index3.html' : 
+            'https://your-production-server.com';
+        
+        gameState.socket = io(socketUrl, {
+            reconnectionAttempts: 5,
+            reconnectionDelay: 1000,
+            transports: ['websocket'],
+            auth: {
+                playerName: gameState.playerName,
+                isHost: gameState.isHost
+            }
+        });
+        
+        // Connection events with enhanced status handling
+        gameState.socket.on('connect', () => {
+            console.log('Connected to server with ID:', gameState.socket.id);
+            gameState.connectionStatus = 'connected';
+            gameState.reconnectAttempts = 0;
+            updateServerStatus(true);
+            hideLoadingScreen();
+            
+            if (gameState.roomCode) {
+                // Rejoin room if we were in one
+                gameState.socket.emit('rejoinRoom', {
+                    roomCode: gameState.roomCode,
+                    playerId: gameState.playerId
+                });
+            }
+        });
+        
+        gameState.socket.on('disconnect', (reason) => {
+            console.log('Disconnected from server:', reason);
+            gameState.connectionStatus = 'disconnected';
+            updateServerStatus(false);
+            
+            if (reason === 'io server disconnect') {
+                // Server initiated disconnect, show error
+                showErrorModal('Disconnected by server. Please refresh the page.');
+            } else {
+                // Temporary disconnect, show reconnecting message
+                showLoadingScreen('Reconnecting to server...');
+            }
+        });
+        
+        gameState.socket.on('reconnect_attempt', (attempt) => {
+            console.log('Reconnection attempt:', attempt);
+            gameState.reconnectAttempts = attempt;
+            showLoadingScreen(`Reconnecting to server... (Attempt ${attempt + 1}/5)`);
+        });
+        
+        gameState.socket.on('reconnect_failed', () => {
+            console.log('Failed to reconnect');
+            gameState.connectionStatus = 'disconnected';
+            updateServerStatus(false);
+            showErrorModal('Failed to connect to server. Please refresh the page.');
+        });
+        
+        // Enhanced game events with error handling
+        gameState.socket.on('playerId', (playerId) => {
+            gameState.playerId = playerId;
+            console.log('Received player ID:', playerId);
+        });
+        
+        gameState.socket.on('roomCreated', (data) => {
+            handleRoomCreated(data);
+        });
+        
+        gameState.socket.on('roomJoined', (data) => {
+            handleRoomJoined(data);
+        });
+        
+        gameState.socket.on('playerJoined', (players) => {
+            handlePlayerJoined(players);
+        });
+        
+        gameState.socket.on('playerLeft', (players) => {
+            handlePlayerLeft(players);
+        });
+        
+        gameState.socket.on('gameStarted', (data) => {
+            handleGameStarted(data);
+        });
+        
+        gameState.socket.on('cardsPlayed', (data) => {
+            handleCardsPlayed(data);
+        });
+        
+        gameState.socket.on('turnSkipped', (data) => {
+            handleTurnSkipped(data);
+        });
+        
+        gameState.socket.on('challengeResult', (data) => {
+            handleChallengeResult(data);
+        });
+        
+        gameState.socket.on('playerWon', (data) => {
+            handlePlayerWon(data);
+        });
+        
+        gameState.socket.on('error', (message) => {
+            showErrorModal(message);
+        });
+    }
+    
+    // Enhanced room creation handler
+    function handleRoomCreated(data) {
+        gameState.roomCode = data.roomCode;
+        gameState.isHost = true;
+        gameState.maxPlayers = data.maxPlayers;
+        gameState.playerName = data.playerName;
+        
+        // Update lobby UI
+        elements.displayRoomCode.textContent = gameState.roomCode;
+        elements.maxPlayers.textContent = gameState.maxPlayers;
+        updateLobbyPlayers([{ 
+            id: gameState.playerId, 
+            name: gameState.playerName, 
+            isHost: true 
+        }]);
+        
+        // Show lobby
+        transitionToScreen(elements.mainMenu, elements.roomLobby);
+    }
+    
+    // Enhanced player joined handler
+    function handlePlayerJoined(players) {
+        updateLobbyPlayers(players);
+        
+        // Show notification
+        const newPlayer = players[players.length - 1];
+        if (newPlayer.id !== gameState.playerId) {
+            showToast(`${newPlayer.name} joined the room`);
+        }
+        
+        // Enable start game button if host and enough players
+        if (gameState.isHost && players.length >= 3) {
+            elements.startGameBtn.disabled = false;
+        }
+    }
+    
+    // Enhanced game start handler
+    function handleGameStarted(data) {
+        gameState.players = data.players;
+        gameState.playerCards = data.playerCards;
+        gameState.currentPlayerIndex = data.currentPlayerIndex;
+        gameState.gameStarted = true;
+        
+        // Update UI
+        transitionToScreen(elements.roomLobby, elements.gameArea);
+        
+        // Check if it's our turn
+        checkIfMyTurn();
+        
+        // Update game UI
+        updateGameUI();
+        populateClaimSelect();
+        
+        // Log initial game state
+        const firstPlayer = gameState.players[gameState.currentPlayerIndex];
+        addToGameLog(`Game started! ${firstPlayer.name} goes first.`);
+        
+        // Show notification if it's our turn
+        if (gameState.isMyTurn) {
+            showToast("It's your turn! Play cards or skip.");
+        }
+    }
+    
+    // Enhanced cards played handler
+    function handleCardsPlayed(data) {
+        gameState.currentPlay = data.currentPlay;
+        gameState.discardPile = data.discardPile;
+        gameState.currentPlayerIndex = data.currentPlayerIndex;
+        gameState.consecutiveSkips = 0;
+        
+        // Update player cards if it's us
+        if (data.playerId === gameState.playerId) {
+            gameState.playerCards = data.playerCards;
+        }
+        
+        // Update UI
+        updateGameUI();
+        
+        // Log the play
+        const player = gameState.players.find(p => p.id === data.currentPlay.playerId);
+        const playerName = player?.name || 'Unknown';
+        addToGameLog(`${playerName} played ${data.currentPlay.cards.length} card(s) claiming ${data.currentPlay.claim.count} ${data.currentPlay.claim.value}${data.currentPlay.claim.count > 1 ? 's' : ''}`);
+        
+        // Show notification if it's now our turn
+        if (gameState.isMyTurn) {
+            showToast("It's your turn! Play cards or skip.");
+        }
+    }
+    
+    // New function to handle screen transitions
+    function transitionToScreen(fromElement, toElement) {
+        fromElement.classList.add('hidden');
+        toElement.classList.remove('hidden');
+        toElement.classList.add('animate-fadeIn');
+        
+        // Remove animation class after it completes
+        setTimeout(() => {
+            toElement.classList.remove('animate-fadeIn');
+        }, 300);
+    }
+    
+    // New function to update all game UI
+    function updateGameUI() {
+        updatePlayersList();
+        updatePlayerCards();
+        updateDiscardPile();
+        updateCurrentPlay();
+        checkIfMyTurn();
+        updateActionButtons();
+    }
+        // 3. UI UPDATE FUNCTIONS ========================================
+        function updatePlayersList() {
+        elements.playersList.innerHTML = '';
+        gameState.players.forEach((player, index) => {
+            const playerEl = document.createElement('div');
+            playerEl.className = `bg-gray-700 bg-opacity-50 rounded-lg p-3 ${index === gameState.currentPlayerIndex ? 'player-active' : ''}`;
+            playerEl.innerHTML = `
+                <div class="flex justify-between items-center">
+                    <div>
+                        <span class="font-medium">${player.name}</span>
+                        <span class="text-sm text-gray-400 ml-2">(${gameState.playerCards[index].length} cards)</span>
+                    </div>
+                    ${index === gameState.currentPlayerIndex ? '<span class="bg-green-500 text-xs px-2 py-1 rounded-full">Current</span>' : ''}
+                </div>
+            `;
+            elements.playersList.appendChild(playerEl);
+        });
+    }
+
+    function updatePlayerCards() {
+        elements.playerCardsContainer.innerHTML = '';
+        const playerIndex = gameState.players.findIndex(p => p.id === gameState.playerId);
+        gameState.playerCards[playerIndex].forEach((card, index) => {
+            const cardEl = document.createElement('div');
+            cardEl.className = 'card';
+            cardEl.innerHTML = `
+                <div class="card-inner">
+                    <div class="card-front">
+                        <div class="flex flex-col items-center">
+                            <span class="${['♥','♦'].includes(card.suit) ? 'text-red-500' : 'text-black'}">
+                                ${card.value}
+                            </span>
+                            <span class="${['♥','♦'].includes(card.suit) ? 'text-red-500' : 'text-black'}">
+                                ${card.suit}
+                            </span>
+                        </div>
+                    </div>
+                    <div class="card-back"></div>
+                </div>
+            `;
+            cardEl.addEventListener('click', () => toggleCardSelection(cardEl, index));
+            elements.playerCardsContainer.appendChild(cardEl);
+        });
+    }
+
+    function updateActionButtons() {
+        elements.playCardsBtn.disabled = !gameState.isMyTurn || selectedCards.length === 0;
+        elements.skipBtn.disabled = !gameState.isMyTurn;
+        elements.challengeBtn.disabled = !gameState.isMyTurn || !gameState.currentPlay;
+    }
+
+    // 4. SOCKET HANDLERS ============================================
+    function handleGameStarted(data) {
+        gameState.players = data.players;
+        gameState.playerCards = data.playerCards;
+        gameState.currentPlayerIndex = data.currentPlayerIndex;
+        gameState.gameStarted = true;
+        
+        elements.roomLobby.classList.add('hidden');
+        elements.gameArea.classList.remove('hidden');
+        updateGameUI();
+        addToGameLog(`Game started! ${gameState.players[0].name} goes first.`);
+    }
+
+    function handleCardsPlayed(data) {
+        gameState.currentPlay = data.currentPlay;
+        gameState.discardPile = data.discardPile;
+        gameState.currentPlayerIndex = data.currentPlayerIndex;
+        updateGameUI();
+        addToGameLog(`${data.playerName} played ${data.cards.length} cards as ${data.claim.value}s`);
+    }
+    // Enhanced error handling
+    function showErrorModal(message) {
+        const errorModal = document.createElement('div');
+        errorModal.className = 'fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 px-4';
+        errorModal.innerHTML = `
+            <div class="bg-gray-800 rounded-xl max-w-md w-full p-6">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-2xl font-bold text-red-500">Error</h2>
+                    <button id="close-error-modal" class="text-gray-400 hover:text-white">
+                        <i class="fas fa-times text-2xl"></i>
+                    </button>
+                </div>
+                <p class="mb-6">${message}</p>
+                <button id="refresh-page-btn" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg transition">
+                    Refresh Page
+                </button>
+            </div>
+        `;
+        
+        document.body.appendChild(errorModal);
+        
+        // Add event listeners
+        errorModal.querySelector('#close-error-modal').addEventListener('click', () => {
+            errorModal.remove();
+        });
+        
+        errorModal.querySelector('#refresh-page-btn').addEventListener('click', () => {
+            window.location.reload();
+        });
+    }
+    
+    // Enhanced loading screen
+    function showLoadingScreen(message = 'Loading...') {
+        elements.loadingScreen.innerHTML = `
+            <div class="text-center">
+                <div class="loader mx-auto mb-4"></div>
+                <p class="text-xl">${message}</p>
+                ${gameState.reconnectAttempts > 0 ? 
+                    `<p class="text-sm text-gray-400 mt-2">Attempt ${gameState.reconnectAttempts + 1} of 5</p>` : ''}
+            </div>
+        `;
+        elements.loadingScreen.classList.remove('hidden');
+    }
+    
+    function hideLoadingScreen() {
+        elements.loadingScreen.classList.add('hidden');
+    }
+    
+    // Initialize the game when DOM is loaded
+    window.addEventListener('DOMContentLoaded', () => {
+        // Initialize Socket.io connection
+        initSocketConnection();
+        
+        // Initialize UI elements
+        elements = {
+            mainMenu: document.getElementById('main-menu'),
+            createRoomModal: document.getElementById('create-room-modal'),
+            joinRoomModal: document.getElementById('join-room-modal'),
+            roomLobby: document.getElementById('room-lobby'),
+            gameArea: document.getElementById('game-area'),
+            playerCardsContainer: document.getElementById('player-cards'),
+            playersList: document.getElementById('players-list'),
+            discardPileContainer: document.getElementById('discard-pile'),
+            currentPlayDisplay: document.getElementById('current-play'),
+            currentClaimText: document.getElementById('current-claim'),
+            gameLog: document.getElementById('game-log'),
+            playCardsBtn: document.getElementById('play-cards-btn'),
+            skipBtn: document.getElementById('skip-btn'),
+            challengeBtn: document.getElementById('challenge-btn'),
+            newGameBtn: document.getElementById('new-game-btn'),
+            rulesBtn: document.getElementById('rules-btn'),
+            rulesModal: document.getElementById('rules-modal'),
+            closeRulesBtns: document.querySelectorAll('.close-rules-btn'),
+            winnerModal: document.getElementById('winner-modal'),
+            winnerText: document.getElementById('winner-text'),
+            newGameWinnerBtn: document.getElementById('new-game-winner-btn'),
+            closeWinnerBtn: document.getElementById('close-winner-btn'),
+            claimSelect: document.getElementById('claim-select'),
+            claimCount: document.getElementById('claim-count'),
+            selectedCount: document.getElementById('selected-count'),
+            createRoomBtn: document.getElementById('create-room-btn'),
+            joinRoomBtn: document.getElementById('join-room-btn'),
+            rulesMenuBtn: document.getElementById('rules-menu-btn'),
+            closeCreateRoom: document.getElementById('close-create-room'),
+            closeJoinRoom: document.getElementById('close-join-room'),
+            hostName: document.getElementById('host-name'),
+            playerCount: document.getElementById('player-count'),
+            startRoomBtn: document.getElementById('start-room-btn'),
+            playerName: document.getElementById('player-name'),
+            roomCode: document.getElementById('room-code'),
+            joinRoomSubmit: document.getElementById('join-room-submit'),
+            displayRoomCode: document.getElementById('display-room-code'),
+            copyRoomCode: document.getElementById('copy-room-code'),
+            currentPlayers: document.getElementById('current-players'),
+            maxPlayers: document.getElementById('max-players'),
+            lobbyPlayers: document.getElementById('lobby-players'),
+            leaveLobbyBtn: document.getElementById('leave-lobby-btn'),
+            startGameBtn: document.getElementById('start-game-btn'),
+            loadingScreen: document.getElementById('loading-screen'),
+            serverStatus: document.getElementById('server-status')
+        };
+        
+        // Set up event listeners
+        setupEventListeners();
+    });
+    
+    // Set up all event listeners
+    function setupEventListeners() {
+        // Game action buttons
+        elements.playCardsBtn.addEventListener('click', playCards);
+        elements.skipBtn.addEventListener('click', skipTurn);
+        elements.challengeBtn.addEventListener('click', challengePlay);
+        elements.newGameBtn.addEventListener('click', () => {
+            gameState.socket.emit('newGame', { roomCode: gameState.roomCode });
+        });
+        
+        // Menu buttons
+        elements.createRoomBtn.addEventListener('click', () => {
+            elements.createRoomModal.classList.remove('hidden');
+        });
+        
+        elements.joinRoomBtn.addEventListener('click', () => {
+            elements.joinRoomModal.classList.remove('hidden');
+        });
+        
+        elements.rulesMenuBtn.addEventListener('click', () => {
+            elements.rulesModal.classList.remove('hidden');
+        });
+        
+        elements.closeCreateRoom.addEventListener('click', () => {
+            elements.createRoomModal.classList.add('hidden');
+        });
+        
+        elements.closeJoinRoom.addEventListener('click', () => {
+            elements.joinRoomModal.classList.add('hidden');
+        });
+        
+        // Room creation/joining
+        elements.startRoomBtn.addEventListener('click', () => {
+            const name = elements.hostName.value.trim();
+            const playerCount = parseInt(elements.playerCount.value);
+            
+            if (!name) {
+                showToast('Please enter your name');
+                return;
+            }
+            
+            gameState.playerName = name;
+            gameState.socket.emit('createRoom', {
+                playerName: name,
+                maxPlayers: playerCount
+            });
+        });
+        
+        elements.joinRoomSubmit.addEventListener('click', () => {
+            const name = elements.playerName.value.trim();
+            const roomCode = elements.roomCode.value.trim().toUpperCase();
+            
+            if (!name) {
+                showToast('Please enter your name');
+                return;
+            }
+            
+            if (!roomCode || roomCode.length !== 5) {
+                showToast('Please enter a valid 5-character room code');
+                return;
+            }
+            
+            gameState.playerName = name;
+            gameState.socket.emit('joinRoom', {
+                playerName: name,
+                roomCode: roomCode
+            });
+        });
+        
+        // Lobby controls
+        elements.copyRoomCode.addEventListener('click', () => {
+            navigator.clipboard.writeText(gameState.roomCode).then(() => {
+                showToast('Room code copied to clipboard!');
+            });
+        });
+        
+        elements.leaveLobbyBtn.addEventListener('click', () => {
+            gameState.socket.emit('leaveRoom', {
+                roomCode: gameState.roomCode,
+                playerId: gameState.playerId
+            });
+            transitionToScreen(elements.roomLobby, elements.mainMenu);
+        });
+        
+        elements.startGameBtn.addEventListener('click', () => {
+            gameState.socket.emit('startGame', {
+                roomCode: gameState.roomCode
+            });
+        });
+        
+        // Modal controls
+        elements.closeRulesBtns.forEach(btn => {
+            btn.addEventListener('click', () => {
+                elements.rulesModal.classList.add('hidden');
+            });
+        });
+        
+        elements.newGameWinnerBtn.addEventListener('click', () => {
+            elements.winnerModal.classList.add('hidden');
+            gameState.socket.emit('newGame', { roomCode: gameState.roomCode });
+        });
+        
+        elements.closeWinnerBtn.addEventListener('click', () => {
+            elements.winnerModal.classList.add('hidden');
+        });
+    }
+</script>
+</body>
+        </html>
