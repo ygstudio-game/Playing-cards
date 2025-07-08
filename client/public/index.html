@@ -279,7 +279,7 @@
         <div class="p-6">
             <div class="flex justify-between items-center mb-4">
                 <h2 class="text-2xl font-bold">Game Rules</h2>
-                <button id="close-rules-btn" class="text-gray-400 hover:text-white">
+                <button id="close-rules-btn" class=" close-rules-btn text-gray-400 hover:text-white">
                     <i class="fas fa-times text-2xl"></i>
                 </button>
             </div>
@@ -353,7 +353,7 @@
             </div>
             
             <div class="mt-6 text-center">
-                <button id="close-rules-btn-2" class="bg-purple-600 hover:bg-purple-700 px-6 py-2 rounded-lg transition">
+                <button id="close-rules-btn" class="close-rules-btn bg-purple-600 hover:bg-purple-700 px-6 py-2 rounded-lg transition">
                     Got it!
                 </button>
             </div>
@@ -445,8 +445,7 @@ function initializeElements() {
         joinRoomBtn: document.getElementById('join-room-btn'),
         rulesMenuBtn: document.getElementById('rules-menu-btn'),
         closeCreateRoom: document.getElementById('close-create-room'),
-        closerulesbtn2: document.getElementById('close-rules-btn-2'),
-        closeJoinRoom: document.getElementById('close-join-room'),
+         closeJoinRoom: document.getElementById('close-join-room'),
         hostName: document.getElementById('host-name'),
         playerCount: document.getElementById('player-count'),
         selectedCount: document.getElementById('selected-count'),
@@ -491,11 +490,9 @@ function initializeElements() {
     });
     
     elements.closeCreateRoom.addEventListener('click', () => {
-        elements.rulesModal.classList.add('hidden');
+        elements.createRoomModal.classList.add('hidden');
     });
-    elements.closerulesbtn2.addEventListener('click', () => {
-        elements.rulesModal.classList.add('hidden');
-    });
+ 
     elements.closeJoinRoom.addEventListener('click', () => {
         elements.joinRoomModal.classList.add('hidden');
     });
