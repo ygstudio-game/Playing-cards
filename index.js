@@ -3,9 +3,9 @@ const http = require('http');
 const { Server } = require('socket.io');
 const dotenv = require('dotenv');
 const path = require('path');
-const Game = require('./game/Game');
-const Player = require('./game/Player');
-const { generateRoomCode } = require('./utils/generateId');
+const Game = require('./server/game/Game');
+const Player = require('./server/game/Player');
+const { generateRoomCode } = require('./server/utils/generateId');
 const { log } = require('console');
 
 dotenv.config();
@@ -22,14 +22,14 @@ const io = new Server(server, {
 });
 
 // Static files serving
-app.use(express.static(path.join(__dirname, '../client/public')));
+app.use(express.static(path.join(__dirname, '/client/public')));
 
 // SPA fallback route
 app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, '../client/public/index.html'));
+  res.sendFile(path.join(__dirname, '/client/public/index.html'));
 });
 app.get('/css/styles.css', (req, res) => {
-    res.sendFile(path.join(__dirname, '../client/public/styles/main.css'));
+    res.sendFile(path.join(__dirname, '/client/public/styles/main.css'));
   });
   
 const activeGames = new Map();
