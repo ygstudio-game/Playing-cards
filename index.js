@@ -17,7 +17,9 @@ const io = new Server(server, {
   cors: {
     // origin: process.env.CLIENT_URL || 'http://localhost:3000',
     origin:   'https://playing-cards-tau.vercel.app/',
-    methods: ['GET', 'POST']
+    methods: ['GET', 'POST'],
+    transports: ['websocket'],
+
   }
 });
 
