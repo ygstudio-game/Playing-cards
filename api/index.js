@@ -201,4 +201,7 @@ function getPlayersInRoom(roomCode) {
 }
 
 const PORT = process.env.PORT || 3000;
- 
+server.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+  console.log(`Client: ${process.env.CLIENT_URL || 'http://localhost:3000'}`);
+});
