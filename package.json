@@ -6,8 +6,8 @@
     "node": "22.x"
   },
   "scripts": {
-    "start": "node server/index.js",
-    "dev": "nodemon server/index.js",
+    "start": "node index.js",
+    "dev": "nodemon index.js",
     "build-css": "tailwindcss -i ./client/public/styles/input.css -o ./client/public/styles/main.css --watch"
   },
   "keywords": [],
